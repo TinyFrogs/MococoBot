@@ -1,5 +1,4 @@
 import discord
-from io import BytesIO
 from core.http_client import http_client
 from core.config import SUPPORTER_CLASSES
 from typing import List, Dict, Any, Optional, Tuple
@@ -74,6 +73,13 @@ async def auto_join_party_by_nickname(party_id: int, user_id: Any, nickname: str
         code, message = await _post_join(int(party_id), user_id, char_id, role)
 
         if code in (200, 201, 204):
+            # 원정대에 자동 등록
+            try:
+                uid = str(user_id) if not str(user_id).startswith("TEMP-") else None
+                if uid and uid.isdigit():
+                    await http_client.post(f"/siblings/{uid}/register", json={"char_name": nickname})
+            except Exception:
+                pass
             return True, message or "파티에 성공적으로 참가했습니다."
         return False, message or "파티 참가에 실패했습니다."
     except Exception as e:
@@ -155,65 +161,6 @@ class RoleSelectView(discord.ui.View):
     async def supporter_button(self, button: discord.ui.Button, interaction: discord.Interaction):
         await self._join_party(interaction, role=1)
 
-class PartyImageView(discord.ui.View):
-    def __init__(self, party_id: int):
-        super().__init__(timeout=300)
-        self.party_id = party_id
-
-    async def _render_and_edit(self, interaction: discord.Interaction, lounge: bool):
-        party_id = self.party_id
-
-        if lounge:
-            api_path = f"/render/lounge/{party_id}"
-            filename = f"raid_lounge_{party_id}.png"
-        else:
-            api_path = f"/render/party/{party_id}"
-            filename = f"raid_party_{party_id}.png"
-
-        await interaction.response.edit_message(
-            content="<a:move_mococo:1440263296656867390> 이미지 생성중입니다..",
-            view=None,
-        )
-
-        try:
-            res = await http_client.get(api_path, timeout=300.0)
-            res.raise_for_status()
-
-            ctype = res.headers.get("content-type", "")
-            if "image" not in ctype:
-                try:
-                    detail = res.json()
-                except Exception:
-                    detail = res.text[:200]
-                raise RuntimeError(f"{detail}\n관리자에게 문의하세요.")
-
-            buf = BytesIO(res.content)
-            buf.seek(0)
-            file = discord.File(buf, filename=filename)
-
-            await interaction.edit_original_response(
-                content=None,
-                attachments=[],
-                view=None,
-                files=[file],
-            )
-
-        except Exception as e:
-            await interaction.edit_original_response(
-                content=f"오류: {e}",
-                attachments=[],
-                view=None,
-            )
-
-    @discord.ui.button(label="심플", style=discord.ButtonStyle.primary)
-    async def simple(self, button: discord.ui.Button, interaction: discord.Interaction):
-        await self._render_and_edit(interaction, lounge=False)
-
-    @discord.ui.button(label="라운지", style=discord.ButtonStyle.secondary)
-    async def lounge(self, button: discord.ui.Button, interaction: discord.Interaction):
-        await self._render_and_edit(interaction, lounge=True)
-
-        
 # ---------------------- 등록된 캐릭터 선택 ----------------------
 
 class RegisteredCharacterSelect(discord.ui.Select):
@@ -496,36 +443,8 @@ class PartyJoinSelectView(discord.ui.View):
 async def handle_party_join(interaction: discord.Interaction, party_id: int):
     """파티 참가 처리"""
     try:
-        resp = await http_client.get(f"/siblings/{interaction.user.id}")
-        characters: List[Dict[str, Any]] = []
-        if resp.status_code == 200:
-            payload = resp.json()
-            characters = payload.get('characters', []) or []
-
-        if characters:
-            await interaction.response.defer(ephemeral=True)
-            embed = discord.Embed(
-                title="🏴‍☠️ 파티 참가",
-                description=f"등록된 캐릭터 **{len(characters)}개**가 있어요!\n아래에서 선택하거나 직접 입력하세요.",
-                color=discord.Color.blue(),
-            )
-            preview = [
-                f"**{c['char_name']}** ({c.get('class_name', 'N/A')}) - 레벨 {c.get('item_lvl', 'N/A')}"
-                for c in characters[:5]
-            ]
-            if preview:
-                embed.add_field(
-                    name="📋 등록된 캐릭터",
-                    value="\n".join(preview) + (f"\n... 외 {len(characters) - 5}개" if len(characters) > 5 else ""),
-                    inline=False,
-                )
-            view = PartyJoinSelectView(party_id, interaction.user.id, characters)
-            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
-        else:
-            # 등록된 캐릭터 없으면 바로 모달
-            modal = CharacterNicknameModal(party_id, interaction.user.id)
-            await interaction.response.send_modal(modal)
-
+        modal = CharacterNicknameModal(party_id, interaction.user.id)
+        await interaction.response.send_modal(modal)
     except Exception as e:
         try:
             await interaction.response.send_message(f"참가 처리 중 오류가 발생했습니다.\n{e}", ephemeral=True)
@@ -640,19 +559,6 @@ async def handle_party_public(interaction: discord.Interaction, party_id: int):
         await interaction.message.edit(view=view)
     except Exception:
         pass
-
-async def handle_party_image(interaction: discord.Interaction, party_id: int):
-    data = await permission_check(interaction, party_id)
-    if not data:
-        return
-
-    view = PartyImageView(party_id)
-
-    await interaction.response.send_message(
-        "어떤 스타일로 이미지를 생성할까요?",
-        view=view,
-        ephemeral=True,
-    )
 
 async def _get_waitlist(party_id: int) -> Tuple[Optional[int], Dict[str, Any]]:
     try:

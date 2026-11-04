@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import discord
 import pytz
 from datetime import datetime
@@ -46,7 +48,14 @@ class RaidCommands:
                 create_public_threads=False,
                 send_messages=False,
                 send_messages_in_threads=False,
-            )
+            ),
+            ctx.guild.me: discord.PermissionOverwrite(
+                view_channel=True,
+                create_public_threads=True,
+                send_messages=True,
+                send_messages_in_threads=True,
+                embed_links=True,
+            ),
         }
 
         try:
@@ -155,9 +164,11 @@ class RaidCommands:
                 },
             )
 
-            if not party_result:
+            if not party_result or not party_result.get("discord_posted"):
+                error_msg = (party_result or {}).get("message", "알 수 없는 오류")
                 await interaction.followup.edit_message(
-                    progress.id, content="파티 생성 중 오류가 발생했습니다. 다시 시도해주세요."
+                    progress.id,
+                    content=f"❌ 파티 생성 실패: {error_msg}\n\n포럼 채널이 설정되지 않은 경우 `/setups` 또는 `/서버설정`을 먼저 실행해주세요."
                 )
                 return
 

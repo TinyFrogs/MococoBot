@@ -15,6 +15,8 @@ from handler.party import CharacterNicknameModal
 from commands.party_manage import ManagePartyView, permission_check
 from commands.raid_role import RaidRoleButtonView
 from commands.server_config import ServerConfigView
+from commands.siblings import ExpeditionRegisterButtonView, ExpeditionManageView
+from handler.siblings import handle_expedition_register_button
 
 
 WEEKDAYS = ["월", "화", "수", "목", "금", "토", "일"]
@@ -544,6 +546,72 @@ style=discord.InputTextStyle.long,
             await ctx.interaction.edit_original_response(
                 content=f"❌ 오류가 발생했습니다: {str(e)}"
             )
+
+    @discord.slash_command(name="원정대", description="내 원정대 캐릭터를 관리해요.")
+    async def 원정대(self, ctx: discord.ApplicationContext):
+        await handle_expedition_register_button(ctx.interaction)
+
+    @discord.slash_command(name="원정대등록채널", description="원정대 등록 버튼을 채널에 게시합니다. (관리자 전용)")
+    @commands.has_permissions(administrator=True)
+    @option("채널", description="버튼을 게시할 채널", type=discord.TextChannel, required=True)
+    async def 원정대등록채널(self, ctx: discord.ApplicationContext, 채널: discord.TextChannel):
+        await ctx.defer(ephemeral=True)
+        embed = discord.Embed(
+            title="🏴‍☠️ 원정대 등록",
+            description=(
+                "아래 버튼을 클릭하여 원정대 캐릭터를 등록하세요.\n\n"
+                "레이드 참가 시 등록된 캐릭터 목록에서 빠르게 선택할 수 있어요."
+            ),
+            color=0x5865F2,
+        )
+        view = ExpeditionRegisterButtonView()
+        await 채널.send(embed=embed, view=view)
+        await ctx.followup.send(f"✅ {채널.mention} 채널에 원정대 등록 버튼을 게시했습니다.", ephemeral=True)
+
+    @discord.slash_command(name="원정대등록", description="캐릭터 이름으로 내 원정대 전체를 등록해요.")
+    @option("닉네임", description="원정대에 속한 캐릭터 이름 하나를 입력하세요.", required=True)
+    async def 원정대등록(self, ctx: discord.ApplicationContext, 닉네임: str):
+        await ctx.defer(ephemeral=True)
+        from services.lostark_service import search_lostark_siblings
+        from services.character_sync import save_character_to_db
+
+        닉네임 = 닉네임.strip()
+        siblings = await search_lostark_siblings(닉네임)
+        if not siblings:
+            await ctx.followup.send(f"❌ '{닉네임}' 캐릭터를 찾을 수 없거나 원정대 정보를 가져오지 못했어요.", ephemeral=True)
+            return
+
+        user_id = ctx.interaction.user.id
+        ok_list, skip_list, fail_list = [], [], []
+
+        for char in siblings:
+            char_name = char.get("char_name", "")
+            if not char_name:
+                continue
+            try:
+                saved = await save_character_to_db(char)
+                if not saved:
+                    fail_list.append(char_name)
+                    continue
+                char_id = saved["id"]
+                resp = await http_client.post(f"/siblings/{user_id}/register", json={"char_name": char_name})
+                data = resp.json() or {}
+                if data.get("action") == "already_exists":
+                    skip_list.append(char_name)
+                else:
+                    ok_list.append(f"{char_name} ({char.get('class_name','?')} | {char.get('item_lvl',0)})")
+            except Exception:
+                fail_list.append(char_name)
+
+        lines = [f"**원정대 등록 결과** ({len(siblings)}개 캐릭터)"]
+        if ok_list:
+            lines.append(f"\n✅ **새로 등록 ({len(ok_list)})**\n" + "\n".join(f"• {c}" for c in ok_list))
+        if skip_list:
+            lines.append(f"\n⏭️ **이미 등록 ({len(skip_list)})**\n" + "\n".join(f"• {c}" for c in skip_list))
+        if fail_list:
+            lines.append(f"\n❌ **실패 ({len(fail_list)})**\n" + "\n".join(f"• {c}" for c in fail_list))
+
+        await ctx.followup.send("\n".join(lines), ephemeral=True)
 
     @discord.slash_command(name="서버설정", description="서버의 레이드 시스템 설정을 관리합니다. (관리자 전용)")
     @commands.has_permissions(administrator=True)

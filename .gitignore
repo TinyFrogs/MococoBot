@@ -205,3 +205,11 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+/.idea/vcs.xml
+/.idea/modules.xml
+/.idea/MococoBot.iml
+/.idea/material_theme_project_new.xml
+/.idea/.gitignore
+/.idea/inspectionProfiles/profiles_settings.xml
+/.idea/misc.xml
+/CLAUDE.md
